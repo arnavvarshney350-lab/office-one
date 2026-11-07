@@ -718,3 +718,43 @@ test('Excel: clicking another cell while a formula is refused keeps the edit whe
   await page.getByLabel('Cell editor').press('Escape')
   await expect(cell(page, 0, 0)).toHaveText(''); await expect(cell(page, 3, 3)).toHaveText('')
 })
+
+/* ------------------------------------------------------------------ ODT import */
+async function makeOdt(): Promise<Buffer> {
+  const { default: JSZip } = await import('jszip')
+  const NS = 'xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0" xmlns:xlink="http://www.w3.org/1999/xlink"'
+  const content = `<?xml version="1.0" encoding="UTF-8"?><office:document-content ${NS} office:version="1.2">
+<office:automatic-styles><style:style style:name="T1" style:family="text"><style:text-properties fo:font-weight="bold"/></style:style><style:style style:name="T2" style:family="text"><style:text-properties fo:font-style="italic"/></style:style></office:automatic-styles>
+<office:body><office:text>
+<text:h text:outline-level="1">Quarterly report</text:h>
+<text:p>Plain, <text:span text:style-name="T1">bold</text:span> and <text:span text:style-name="T2">italic</text:span> text with a <text:a xlink:href="https://example.com">link</text:a>.</text:p>
+<text:list><text:list-item><text:p>First point</text:p></text:list-item><text:list-item><text:p>Second point</text:p></text:list-item></text:list>
+<table:table><table:table-row><table:table-cell><text:p>A1</text:p></table:table-cell><table:table-cell><text:p>B1</text:p></table:table-cell></table:table-row></table:table>
+</office:text></office:body></office:document-content>`
+  const zip = new JSZip()
+  zip.file('mimetype', 'application/vnd.oasis.opendocument.text', { compression: 'STORE' }); zip.file('content.xml', content)
+  return zip.generateAsync({ type: 'nodebuffer' })
+}
+const ODT_MIME = 'application/vnd.oasis.opendocument.text'
+
+test('ODT: uploading from Home creates a Word document with the formatting intact', async ({ page }) => {
+  await page.goto('/')
+  await page.getByTestId('home-upload').setInputFiles({ name: 'Report.odt', mimeType: ODT_MIME, buffer: await makeOdt() })
+  await expect(page.getByText(/Imported Report\.docx/)).toBeVisible()
+  await page.goto('/word'); await page.getByRole('button', { name: /Report\.docx/ }).click()
+  const body = page.getByLabel('Document body')
+  await expect(body.locator('h1')).toHaveText('Quarterly report')
+  await expect(body.locator('strong')).toHaveText('bold'); await expect(body.locator('em')).toHaveText('italic')
+  await expect(body.locator('a[href="https://example.com"]')).toHaveText('link')
+  await expect(body.locator('li')).toHaveText(['First point', 'Second point'])
+  await expect(body.locator('td')).toHaveText(['A1', 'B1'])
+})
+
+test('ODT: the Word import button and the Drive upload both accept .odt, and a broken file gives a clear error', async ({ page }) => {
+  await page.getByRole('button', { name: 'New document' }).click()
+  await page.getByTestId('word-import-input').setInputFiles({ name: 'Memo.odt', mimeType: ODT_MIME, buffer: await makeOdt() })
+  await expect(page.getByLabel('Document body').locator('h1')).toHaveText('Quarterly report')
+  await page.goto('/files')
+  await page.getByTestId('files-upload').setInputFiles({ name: 'Broken.odt', mimeType: ODT_MIME, buffer: Buffer.from('not a zip') })
+  await expect(page.getByText(/not a valid \.odt file/)).toBeVisible()
+})

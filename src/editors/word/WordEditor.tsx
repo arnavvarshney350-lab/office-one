@@ -22,7 +22,7 @@ import { EditorHeader, type MenuItem } from '../../components/EditorHeader'
 import { useAutosave } from '../../hooks/useAutosave'
 import { createFile, saveContent } from '../../file-system/fileService'
 import { download, safeName } from '../../services/download'
-import { docxToHtml, textToHtml } from '../../services/importers'
+import { docxToHtml, odtToHtml, textToHtml } from '../../services/importers'
 import { useToast } from '../../contexts/ToastContext'
 import { Find, findKey } from './find'
 import { exportDocx, exportPdf } from './io'
@@ -286,7 +286,7 @@ export function WordEditor({ file }: { file: OFile }) {
   async function importDocx(f: File | undefined) {
     if (!f || !editor) return
     try {
-      const html = /\.docx$/i.test(f.name) ? await docxToHtml(await f.arrayBuffer()) : textToHtml(await f.text())
+      const html = /\.docx$/i.test(f.name) ? await docxToHtml(await f.arrayBuffer()) : /\.odt$/i.test(f.name) ? await odtToHtml(await f.arrayBuffer()) : textToHtml(await f.text())
       editor.commands.setContent(html, { emitUpdate: true })
       toast(`Imported ${f.name}`)
     } catch (e) { toast(`Import failed: ${(e as Error).message}`, 'error') }
@@ -556,7 +556,7 @@ export function WordEditor({ file }: { file: OFile }) {
       </div>
 
       <input ref={imgInput} type="file" accept="image/*" hidden data-testid="word-image-input" onChange={e => { insertImage(e.target.files?.[0]); e.target.value = '' }} />
-      <input ref={importInput} type="file" accept=".docx,.txt,.md" hidden data-testid="word-import-input" onChange={e => { void importDocx(e.target.files?.[0]); e.target.value = '' }} />
+      <input ref={importInput} type="file" accept=".docx,.odt,.txt,.md" hidden data-testid="word-import-input" onChange={e => { void importDocx(e.target.files?.[0]); e.target.value = '' }} />
       {ctx && <ContextMenu x={ctx.x} y={ctx.y} items={ctx.items} onClose={() => setCtx(null)} />}
       {dialog === 'table' && <TableDialog onClose={() => setDialog(null)} onInsert={(r, cc) => editor.chain().focus().setTextSelection(editor.state.selection.to).insertTable({ rows: r, cols: cc, withHeaderRow: true }).run()} />}
       {dialog === 'link' && (

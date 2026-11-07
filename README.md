@@ -7,7 +7,7 @@ Not affiliated with Microsoft.
 
 ## What you can do
 
-- **Word**: write and format documents. Import DOCX, export DOCX or PDF.
+- **Word**: write and format documents. Import DOCX, ODT (OpenDocument) or TXT, export DOCX or PDF.
 - **Excel**: spreadsheets with about 200 formulas, charts and sorting. Import and export CSV or XLSX.
 - **PowerPoint**: make slides with 22 ready-made themes (light, dark and colourful), shapes, pictures and
   transitions. Present full screen. Export PPTX or PDF.
@@ -86,7 +86,8 @@ For an Intel Mac, use `npm run desktop:build -- x64` in step 2.
 - One person, one browser. There is no sync or sharing between devices.
 - Fonts come from Google Fonts, so you need internet the first time you use a font. Offline, only fonts
   installed on your computer are offered.
-- **Word**: no comments, track changes, footnotes, or headers and footers.
+- **Word**: no comments, track changes, footnotes, or headers and footers. ODT import keeps headings, bold,
+  italic, underline, lists, tables, links and pictures; other ODT formatting (fonts, colours, page layout) is dropped.
 - **Excel**: no pivot tables, merged cells or macros. XLSX export keeps values and formulas but not cell
   colours or charts.
 - **PowerPoint**:
