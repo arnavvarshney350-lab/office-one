@@ -668,3 +668,53 @@ test('PowerPoint themes: PPTX carries theme fonts, colours and background; PDF e
   const head = (await (await import('node:fs/promises')).readFile(pdfFile)).subarray(0, 5).toString()
   expect(head).toBe('%PDF-')
 })
+
+/* ------------------------------------------------------------------ Excel: selection, fill handle, formula entry */
+const typeInto = async (page: Page, r: number, c: number, text: string) => { await cell(page, r, c).click(); await page.keyboard.type(text); await page.keyboard.press('Enter') }
+
+test('Excel: dragging a selection never paints native text selection over other cells', async ({ page }) => {
+  await page.goto('/excel'); await page.getByRole('button', { name: 'New blank workbook' }).click()
+  await typeInto(page, 0, 0, '234'); await typeInto(page, 1, 0, '333'); await typeInto(page, 0, 3, '1'); await typeInto(page, 1, 3, '2')
+  const a = (await cell(page, 0, 3).boundingBox())!, b = (await cell(page, 8, 3).boundingBox())!
+  await page.mouse.move(a.x + 10, a.y + 8); await page.mouse.down(); await page.mouse.move(b.x - 40, b.y + 8, { steps: 8 }); await page.mouse.move(b.x + 10, b.y + 8, { steps: 4 }); await page.mouse.up()
+  expect(await page.evaluate(() => window.getSelection()?.toString() ?? '')).toBe('')
+  await expect(page.getByLabel('Name box')).toHaveValue('D1:D9')
+})
+
+test('Excel: the fill handle continues a series, copies formulas and previews while dragging', async ({ page }) => {
+  await page.goto('/excel'); await page.getByRole('button', { name: 'New blank workbook' }).click()
+  await typeInto(page, 0, 0, '1'); await typeInto(page, 1, 0, '2'); await typeInto(page, 0, 1, '=A1*10')
+  await cell(page, 0, 0).click(); await page.keyboard.down('Shift'); await cell(page, 1, 0).click(); await page.keyboard.up('Shift')
+  const handle = page.getByTestId('fill-handle'), h = (await handle.boundingBox())!, t = (await cell(page, 5, 0).boundingBox())!
+  await page.mouse.move(h.x + h.width / 2, h.y + h.height / 2); await page.mouse.down(); await page.mouse.move(t.x + 20, t.y + 8, { steps: 8 })
+  await expect(page.getByTestId('fill-preview')).toBeVisible()
+  await page.mouse.up()
+  await expect(page.getByTestId('fill-preview')).toHaveCount(0)
+  for (const [r, v] of [[2, '3'], [3, '4'], [4, '5'], [5, '6']] as const) await expect(cell(page, r, 0)).toHaveText(v)
+  await expect(page.getByLabel('Name box')).toHaveValue('A1:A6')
+  // single formula cell: references shift as it is filled down
+  await cell(page, 0, 1).click()
+  const h2 = (await page.getByTestId('fill-handle').boundingBox())!, t2 = (await cell(page, 3, 1).boundingBox())!
+  await page.mouse.move(h2.x + h2.width / 2, h2.y + h2.height / 2); await page.mouse.down(); await page.mouse.move(t2.x + 20, t2.y + 8, { steps: 6 }); await page.mouse.up()
+  await expect(cell(page, 3, 1)).toHaveText('40'); await expect(cell(page, 2, 1)).toHaveText('30')
+})
+
+test('Excel: a formula with the wrong number of arguments is refused with a message and stays editable', async ({ page }) => {
+  await page.goto('/excel'); await page.getByRole('button', { name: 'New blank workbook' }).click()
+  await cell(page, 4, 0).click(); await page.keyboard.type('=SUM()'); await page.keyboard.press('Enter')
+  await expect(page.getByText(/SUM needs at least 1 argument/)).toBeVisible()
+  await expect(page.getByLabel('Cell editor')).toBeVisible()
+  await page.getByLabel('Cell editor').fill('=SUM(1,2)'); await page.keyboard.press('Enter')
+  await expect(cell(page, 4, 0)).toHaveText('3')
+})
+
+test('Excel: clicking another cell while a formula is refused keeps the edit where it is', async ({ page }) => {
+  await page.goto('/excel'); await page.getByRole('button', { name: 'New blank workbook' }).click()
+  await cell(page, 0, 0).click(); await page.keyboard.type('=SUM()'); await page.keyboard.press('Enter')
+  await expect(page.getByLabel('Cell editor')).toBeVisible()
+  await cell(page, 3, 3).click({ force: true })
+  await expect(page.getByLabel('Cell editor')).toHaveValue('=SUM()')
+  await expect(page.getByLabel('Name box')).toHaveValue('A1')
+  await page.getByLabel('Cell editor').press('Escape')
+  await expect(cell(page, 0, 0)).toHaveText(''); await expect(cell(page, 3, 3)).toHaveText('')
+})

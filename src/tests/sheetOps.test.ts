@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { Evaluator } from '../editors/excel/formula'
+import { Evaluator, validateFormula } from '../editors/excel/formula'
 import { emptyWorkbook, type CondRule, type Workbook } from '../editors/excel/model'
-import { cfContext, cfFor, chartData, findCells, parseRange, replaceInCell, sortRange } from '../editors/excel/sheetOps'
+import { cfContext, cfFor, chartData, fillRange, findCells, parseRange, replaceInCell, sortRange } from '../editors/excel/sheetOps'
 
 const wb = (cells: Record<string, string>): Workbook => { const w = emptyWorkbook(); for (const [k, v] of Object.entries(cells)) w.sheets[0].cells[k] = { v }; return w }
 const col = (w: Workbook, c: string, n: number) => Array.from({ length: n }, (_, i) => w.sheets[0].cells[`${c}${i + 1}`]?.v || null) // blank and missing cells both read as null
@@ -86,4 +86,36 @@ describe('chart data and ranges', () => {
     expect(d.series[0].values).toEqual([3, 4, 5])
   })
   it('parses A1 ranges in any order', () => { expect(parseRange('C3:A1')).toEqual({ r1: 0, c1: 0, r2: 2, c2: 2 }); expect(parseRange('nope')).toBeNull() })
+})
+
+describe('fill handle (fillRange)', () => {
+  const grid = (o: Record<string, string>) => Object.fromEntries(Object.entries(o).map(([k, v]) => [k, { v }]))
+  const vals = (c: Record<string, { v: string }>, ...a: string[]) => a.map(x => c[x]?.v)
+  it('continues a numeric series from two or more cells', () => {
+    const r = fillRange(grid({ D1: '1', D2: '2' }), { r1: 0, r2: 1, c1: 3, c2: 3 }, { r: 5, c: 3 })!
+    expect(vals(r.cells, 'D3', 'D4', 'D5', 'D6')).toEqual(['3', '4', '5', '6']); expect(r.rect).toEqual({ r1: 0, r2: 5, c1: 3, c2: 3 })
+  })
+  it('copies a lone number and counts up a lone "Item 1"', () => {
+    expect(vals(fillRange(grid({ A1: '7' }), { r1: 0, r2: 0, c1: 0, c2: 0 }, { r: 2, c: 0 })!.cells, 'A2', 'A3')).toEqual(['7', '7'])
+    expect(vals(fillRange(grid({ A1: 'Item 1' }), { r1: 0, r2: 0, c1: 0, c2: 0 }, { r: 2, c: 0 })!.cells, 'A2', 'A3')).toEqual(['Item 2', 'Item 3'])
+  })
+  it('shifts formula references, right and up too', () => {
+    expect(vals(fillRange(grid({ B1: '=A1*2' }), { r1: 0, r2: 0, c1: 1, c2: 1 }, { r: 2, c: 1 })!.cells, 'B2', 'B3')).toEqual(['=A2*2', '=A3*2'])
+    expect(vals(fillRange(grid({ A1: '1', B1: '3' }), { r1: 0, r2: 0, c1: 0, c2: 1 }, { r: 0, c: 3 })!.cells, 'C1', 'D1')).toEqual(['5', '7'])
+    const up = fillRange(grid({ A5: '10', A6: '20' }), { r1: 4, r2: 5, c1: 0, c2: 0 }, { r: 2, c: 0 })!
+    expect(vals(up.cells, 'A4', 'A3')).toEqual(['0', '-10']); expect(up.rect.r1).toBe(2)
+  })
+  it('does nothing when released inside the block', () => expect(fillRange(grid({ A1: '1' }), { r1: 0, r2: 0, c1: 0, c2: 0 }, { r: 0, c: 0 })).toBeNull())
+})
+
+describe('validateFormula (entry-time check)', () => {
+  it('rejects wrong argument counts and syntax errors with a message', () => {
+    expect(validateFormula('=SUM()')).toMatch(/SUM needs at least 1 argument/)
+    expect(validateFormula('=ABS(1,2)')).toMatch(/ABS needs 1 argument/)
+    expect(validateFormula('=1+')).toMatch(/problem with this formula/)
+    expect(validateFormula('=IF(ABS(),1,2)')).toMatch(/ABS/)
+  })
+  it('accepts valid formulas, unknown names (#NAME?) and plain text', () => {
+    for (const f of ['=SUM(A1:A4)', '=1+2', '=FOO(1)', '=IF(A1>1,"a","b")', 'hello', '=']) expect(validateFormula(f)).toBeNull()
+  })
 })

@@ -1,6 +1,6 @@
 /** Pure sheet operations: sorting, range parsing, conditional formats, find and replace, chart data. */
 import { Evaluator, toStr, type Scalar } from './formula'
-import { colName, parseAddr, toAddr, type Cell, type Chart, type CondRule, type Sheet, type Workbook } from './model'
+import { colName, parseAddr, shiftFormula, toAddr, type Cell, type Chart, type CondRule, type Sheet, type Workbook } from './model'
 import { FormulaError } from './formulaCore'
 
 export interface Rect { r1: number; c1: number; r2: number; c2: number }
@@ -169,3 +169,38 @@ export function chartData(ev: Evaluator, si: number, chart: Chart): ChartData {
   return { categories, series }
 }
 export type { Sheet }
+
+/**
+ * Fill handle: extend the source block `S` to the cell `to`, like dragging Excel's fill handle.
+ * Two or more numbers continue as a linear series, a lone "Item 1" counts up, formulas shift their
+ * references, anything else repeats. Returns null when `to` is inside the block.
+ */
+export function fillRange(cells: Record<string, Cell>, S: Rect, to: { r: number; c: number }): { cells: Record<string, Cell>; rect: Rect } | null {
+  const dv = to.r > S.r2 ? to.r - S.r2 : to.r < S.r1 ? to.r - S.r1 : 0
+  const dh = to.c > S.c2 ? to.c - S.c2 : to.c < S.c1 ? to.c - S.c1 : 0
+  if (!dv && !dh) return null
+  const vertical = Math.abs(dv) >= Math.abs(dh)
+  const count = Math.abs(vertical ? dv : dh), sign = (vertical ? dv : dh) > 0 ? 1 : -1
+  const lines = vertical ? S.c2 - S.c1 + 1 : S.r2 - S.r1 + 1, n = vertical ? S.r2 - S.r1 + 1 : S.c2 - S.c1 + 1
+  const out = { ...cells }
+  const isNum = (c?: Cell) => !!c && !c.v.startsWith('=') && c.v.trim() !== '' && Number.isFinite(Number(c.v))
+  for (let line = 0; line < lines; line++) {
+    const at = (i: number) => (vertical ? toAddr(S.c1 + line, S.r1 + i) : toAddr(S.c1 + i, S.r1 + line))
+    const src = Array.from({ length: n }, (_, i) => cells[at(i)])
+    const series = n >= 2 && src.every(isNum)
+    const first = series ? Number(src[0]!.v) : 0, last = series ? Number(src[n - 1]!.v) : 0, step = series ? (last - first) / (n - 1) : 0
+    for (let k = 1; k <= count; k++) {
+      const i = sign > 0 ? n - 1 + k : -k
+      const from = ((i % n) + n) % n, s = src[from]
+      if (!s) { delete out[at(i)]; continue }
+      let v = s.v
+      const text = /^(.*?)(\d+)$/.exec(v)
+      if (series) v = String(Number((sign > 0 ? last + step * k : first - step * k).toFixed(10)))
+      else if (v.startsWith('=')) v = vertical ? shiftFormula(v, 0, i - from) : shiftFormula(v, i - from, 0)
+      else if (n === 1 && text && !isNum(s) && Number(text[2]) + sign * k >= 0) v = text[1] + String(Number(text[2]) + sign * k).padStart(text[2].length, '0')
+      out[at(i)] = { ...s, v }
+    }
+  }
+  const rect = vertical ? (sign > 0 ? { ...S, r2: S.r2 + count } : { ...S, r1: S.r1 - count }) : (sign > 0 ? { ...S, c2: S.c2 + count } : { ...S, c1: S.c1 - count })
+  return { cells: out, rect }
+}

@@ -10,11 +10,11 @@ import { useHistory } from '../../hooks/useHistory'
 import { createFile, saveContent } from '../../file-system/fileService'
 import { download, safeName } from '../../services/download'
 import { useToast } from '../../contexts/ToastContext'
-import { balanceFormula, FormulaError, formatValue, type Scalar } from './formula'
+import { balanceFormula, FormulaError, formatValue, validateFormula, type Scalar } from './formula'
 import { FUNCTION_GROUPS, FUNCTION_HINTS, FUNCTIONS } from './functions'
 import { useEvaluator } from './useEvaluator'
 import { colName, deleteCols, deleteRows, insertCols, insertRows, newSheet, parseAddr, shiftFormula, toAddr, type Cell, type CellStyle, type Chart, type CondKind, type CondRule, type Sheet, type Workbook } from './model'
-import { cfContext, cfFor, chartData, findCells, parseRange, rangeToA1, replaceInCell, sortRange } from './sheetOps'
+import { cfContext, cfFor, chartData, fillRange, findCells, parseRange, rangeToA1, replaceInCell, sortRange, type Rect } from './sheetOps'
 import { ChartView } from './ChartView'
 import { CF_KINDS, ChartDialog, CondFormatDialog } from './Dialogs'
 import { uid } from '../../utilities/id'
@@ -80,6 +80,8 @@ export function ExcelEditor({ file }: { file: OFile }) {
   const [findIdx, setFindIdx] = useState(0)
   const chartGesture = useRef<{ id: string; mode: 'move' | 'size'; sx: number; sy: number; o: Chart; base: Workbook } | null>(null)
   const dragging = useRef(false)
+  const fillRef = useRef<Rect | null>(null)
+  const [fillTo, setFillTo] = useState<{ r: number; c: number } | null>(null)
   const gridRef = useRef<HTMLDivElement>(null)
   const [barFocused, setBarFocused] = useState(false)
   const importRef = useRef<HTMLInputElement>(null)
@@ -123,11 +125,15 @@ export function ExcelEditor({ file }: { file: OFile }) {
     else if (r > el.scrollLeft + el.clientWidth) el.scrollLeft = r - el.clientWidth
   }
   function startEdit(initial?: string) { setDraft(initial ?? activeCell?.v ?? ''); setSugIdx(0); setSugOpen(true) }
-  function endEdit(save: boolean, dr = 0, dc = 0) {
-    if (draft === null) return
+  /** Finishes the edit; false when a formula was refused and the cell stays in edit mode. */
+  function endEdit(save: boolean, dr = 0, dc = 0): boolean {
+    if (draft === null) return true
     const text = save ? balanceFormula(draft) : draft
+    const problem = save ? validateFormula(text) : null
+    if (problem) { toast(problem, 'error'); return false } // like Excel: the cell stays in edit mode until the formula is fixed
     if (save && text !== (activeCell?.v ?? '')) setSheet(s => { const cells = { ...s.cells }; setCellValue(cells, addr, text); return { ...s, cells } })
     setDraft(null); setSugOpen(true); move(dr, dc); gridRef.current?.focus()
+    return true
   }
 
   function forEachSel(fn: (a: string, r: number, c: number) => void) { for (let r = rect.r1; r <= rect.r2; r++) for (let c = rect.c1; c <= rect.c2; c++) fn(toAddr(c, r), r, c) }
@@ -144,6 +150,30 @@ export function ExcelEditor({ file }: { file: OFile }) {
     applyStyle({ dec: Math.max(0, Math.min(10, shown + d)) })
   }
   useEffect(() => { const used = new Set<string>(); for (const sh of wbRef.current.sheets) for (const c of Object.values(sh.cells)) if (c.s?.font) used.add(c.s.font); void preloadFonts(used) }, [file.id])
+
+  // Fill handle: drag the square at the corner of the selection, release to fill.
+  const fillToRef = useRef(fillTo); fillToRef.current = fillTo
+  const sheetRef = useRef(sheet); sheetRef.current = sheet
+  useEffect(() => {
+    const up = () => {
+      const src = fillRef.current, to = fillToRef.current
+      fillRef.current = null; setFillTo(null)
+      if (!src || !to) return
+      const res = fillRange(sheetRef.current.cells, src, to)
+      if (!res) return
+      setSheet(s => ({ ...s, cells: res.cells }))
+      setAnchor({ r: res.rect.r1, c: res.rect.c1 }); setFocus({ r: res.rect.r2, c: res.rect.c2 })
+    }
+    window.addEventListener('mouseup', up)
+    return () => window.removeEventListener('mouseup', up)
+  }, [])
+  const fillPreview = (() => {
+    if (!fillTo || !fillRef.current) return null
+    const S = fillRef.current
+    const dv = fillTo.r > S.r2 ? fillTo.r - S.r2 : fillTo.r < S.r1 ? fillTo.r - S.r1 : 0, dh = fillTo.c > S.c2 ? fillTo.c - S.c2 : fillTo.c < S.c1 ? fillTo.c - S.c1 : 0
+    if (!dv && !dh) return null
+    return Math.abs(dv) >= Math.abs(dh) ? { ...S, r1: dv < 0 ? S.r1 + dv : S.r1, r2: dv > 0 ? S.r2 + dv : S.r2 } : { ...S, c1: dh < 0 ? S.c1 + dh : S.c1, c2: dh > 0 ? S.c2 + dh : S.c2 }
+  })()
 
   function fill(dir: 'down' | 'right') {
     setSheet(s => {
@@ -628,14 +658,15 @@ export function ExcelEditor({ file }: { file: OFile }) {
         onMouseDown={e => {
           if (editing && (e.target as HTMLElement).tagName === 'INPUT') return
           const p = cellFrom(e.target); if (!p) return
-          if (editing) endEdit(true)
+          if (editing && !endEdit(true)) { e.preventDefault(); return }
+          e.preventDefault() // stop the browser's own text selection from painting over neighbouring cells while dragging
           gridRef.current?.focus(); dragging.current = true
           if (e.shiftKey) setFocus(p); else { setAnchor(p); setFocus(p) }
         }}
-        onMouseOver={e => { if (!dragging.current) return; const p = cellFrom(e.target); if (p) setFocus(p) }}
+        onMouseOver={e => { if (fillRef.current) { const p = cellFrom(e.target); if (p) setFillTo(p); return } if (!dragging.current) return; const p = cellFrom(e.target); if (p) setFocus(p) }}
         onDoubleClick={e => { if (cellFrom(e.target)) startEdit() }}>
         <div style={{ width: HDR_W + colLeft[sheet.cols], position: 'relative' }}>
-          <table style={{ tableLayout: 'fixed', width: HDR_W + colLeft[sheet.cols], borderCollapse: 'separate', borderSpacing: 0 }}>
+          <table className="select-none" style={{ tableLayout: 'fixed', width: HDR_W + colLeft[sheet.cols], borderCollapse: 'separate', borderSpacing: 0 }}>
             <colgroup><col style={{ width: HDR_W }} />{cols.map(c => <col key={c} style={{ width: colW(c) }} />)}</colgroup>
             <thead className="sticky top-0 z-10">
               <tr>
@@ -685,12 +716,17 @@ export function ExcelEditor({ file }: { file: OFile }) {
             </div>
           ))}
           <div aria-hidden className="absolute pointer-events-none border-2 border-accent z-[6]" style={{ left, top, width, height, background: multi ? 'color-mix(in srgb, var(--accent) 10%, transparent)' : undefined }} />
+          {!editing && (
+            <div data-testid="fill-handle" aria-label="Fill handle" title="Drag to fill" onMouseDown={e => { e.preventDefault(); e.stopPropagation(); fillRef.current = { ...rect }; setFillTo({ r: rect.r2, c: rect.c2 }) }}
+              className="absolute z-[9] w-[9px] h-[9px] bg-accent border border-surface cursor-crosshair" style={{ left: left + width - 5, top: top + height - 5 }} />
+          )}
+          {fillPreview && <div aria-hidden data-testid="fill-preview" className="absolute pointer-events-none border-2 border-dashed border-accent z-[6]" style={{ left: HDR_W + colLeft[fillPreview.c1], top: ROW_H + fillPreview.r1 * ROW_H, width: colLeft[fillPreview.c2 + 1] - colLeft[fillPreview.c1], height: (fillPreview.r2 - fillPreview.r1 + 1) * ROW_H }} />}
           {editing && !barFocused && (
             <div className="absolute z-[8]" style={{ left: HDR_W + colLeft[focus.c], top: ROW_H + focus.r * ROW_H }}>
               <input ref={el => { if (el && document.activeElement !== el) { el.focus(); el.setSelectionRange(el.value.length, el.value.length) } }} aria-label="Cell editor" value={draft ?? ''}
                 onChange={e => { setDraft(e.target.value); setSugIdx(0); setSugOpen(true) }}
                 onKeyDown={e => { e.stopPropagation(); if (suggestionKey(e)) return; if (e.key === 'Enter') { e.preventDefault(); endEdit(true, e.shiftKey ? -1 : 1, 0) } else if (e.key === 'Tab') { e.preventDefault(); endEdit(true, 0, e.shiftKey ? -1 : 1) } else if (e.key === 'Escape') endEdit(false) }}
-                className="px-1.5 text-[13px] bg-surface border-2 border-accent outline-none block"
+                className="px-1.5 text-[13px] bg-surface border-2 border-accent outline-none block select-text"
                 style={{ minWidth: colW(focus.c), height: ROW_H }} />
               {SuggestList}
             </div>

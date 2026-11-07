@@ -595,6 +595,32 @@ export class Evaluator {
  * Excel closes unbalanced parentheses when you commit a formula. Quoted text is ignored so
  * `="a("` is left alone.
  */
+/**
+ * Entry-time check, like Excel's "There's a problem with this formula": returns a message for a formula
+ * that cannot be parsed or calls a known function with the wrong number of arguments, else null.
+ * Unknown function names are allowed (they evaluate to #NAME?).
+ */
+export function validateFormula(text: string): string | null {
+  if (!text.startsWith('=') || text.length < 2) return null
+  let tree: Node
+  try { tree = parse(text.slice(1)) } catch { return "There's a problem with this formula. Check the brackets, quotes and commas." }
+  const walk = (n: Node): string | null => {
+    if (n.k === 'fn') {
+      const def = FUNCTIONS[n.name]
+      const supplied = n.args.length === 1 && n.args[0].k === 'empty' ? 0 : n.args.length
+      if (def && (supplied < def.min || supplied > def.max)) {
+        const need = def.max >= 255 ? `at least ${def.min}` : def.min === def.max ? `${def.min}` : `${def.min} to ${def.max}`
+        return `${n.name} needs ${need} argument${def.max === 1 ? '' : 's'}, but ${supplied} ${supplied === 1 ? 'was' : 'were'} given.`
+      }
+      for (const a of n.args) { const m = walk(a); if (m) return m }
+    } else if (n.k === 'un') return walk(n.a)
+    else if (n.k === 'bin') return walk(n.a) ?? walk(n.b)
+    else if (n.k === 'array') { for (const r of n.rows) for (const a of r) { const m = walk(a); if (m) return m } }
+    return null
+  }
+  return walk(tree)
+}
+
 export function balanceFormula(input: string): string {
   if (!input.startsWith('=')) return input
   let depth = 0, inStr = false
