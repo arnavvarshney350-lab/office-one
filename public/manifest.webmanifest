@@ -1,0 +1,13 @@
+{
+  "name": "Office One",
+  "short_name": "Office One",
+  "description": "Word, Excel and PowerPoint in your browser. Everything stays on your device.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#14161a",
+  "theme_color": "#2563eb",
+  "icons": [
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}

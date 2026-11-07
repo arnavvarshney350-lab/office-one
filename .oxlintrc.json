@@ -1,0 +1,11 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "rules": {
+    "react/refs": "off",
+    "react/only-export-components": "off",
+    "react/set-state-in-effect": "off",
+    "react/preserve-manual-memoization": "off",
+    "no-control-regex": "off"
+  },
+  "ignorePatterns": ["dist", "test-results", "playwright-report"]
+}

@@ -1,0 +1,9 @@
+{
+  "name": "office-one",
+  "productName": "Office One",
+  "version": "1.0.0",
+  "description": "Word, Excel and PowerPoint in your browser, as a Mac app. Everything stays on your device.",
+  "main": "main.cjs",
+  "author": "Office One",
+  "license": "MIT"
+}
